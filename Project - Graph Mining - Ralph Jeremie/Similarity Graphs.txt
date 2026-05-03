@@ -1,0 +1,186 @@
+1- User Similarity with Jaccard based on same movies watched:
+CALL gds.nodeSimilarity.filtered.stream(
+  'movielens_bipartite',
+  {
+    sourceNodeFilter: 'User',
+    targetNodeFilter: 'User',
+    similarityMetric: 'JACCARD'
+  }
+)
+YIELD node1, node2, similarity
+
+RETURN
+  gds.util.asNode(node1).id AS user1,
+  gds.util.asNode(node2).id AS user2,
+  similarity
+ORDER BY similarity DESC
+LIMIT 10;
+
+2- Users subset of others - Overlap Similarity:
+CALL gds.nodeSimilarity.stream('movielens_bipartite', {
+  similarityMetric: 'OVERLAP'
+})
+YIELD node1, node2, similarity
+WITH gds.util.asNode(node1) AS u1, gds.util.asNode(node2) AS u2, similarity
+WHERE u1:User AND u2:User AND id(u1) < id(u2)
+MATCH (u1)-[:RATED]->(m1:Movie)
+WITH u1, u2, similarity, count(DISTINCT m1) AS watched1
+MATCH (u2)-[:RATED]->(m2:Movie)
+WITH u1, u2, similarity, watched1, count(DISTINCT m2) AS watched2
+RETURN
+  u1.id AS user1,
+  watched1,
+  u2.id AS user2,
+  watched2,
+  similarity
+ORDER BY similarity DESC, abs(watched1 - watched2) DESC
+LIMIT 10;
+
+3- users with similar ratings behavior:
+MATCH (u1:User)-[r1:RATED]->(m:Movie)<-[r2:RATED]-(u2:User)
+WHERE u1.id < u2.id
+WITH u1, u2, m, r1.rating AS rating1, r2.rating AS rating2
+ORDER BY m.id
+WITH
+  u1,
+  u2,
+  collect(rating1) AS ratings1,
+  collect(rating2) AS ratings2,
+  count(m) AS sharedMovies
+WHERE sharedMovies >= 5
+RETURN
+  u1.id AS user1,
+  u2.id AS user2,
+  sharedMovies,
+  gds.similarity.cosine(ratings1, ratings2) AS cosineSimilarity
+ORDER BY cosineSimilarity DESC, sharedMovies DESC
+LIMIT 10;
+
+FOR MOVIES:
+1- Jaccard on movies to get pairs attracting same audience:
+CALL gds.nodeSimilarity.stream('movielens_bipartite', {
+  similarityMetric: 'JACCARD'
+})
+YIELD node1, node2, similarity
+WITH gds.util.asNode(node1) AS m1, gds.util.asNode(node2) AS m2, similarity
+WHERE m1:Movie AND m2:Movie AND id(m1) < id(m2)
+RETURN
+  m1.id AS movie1,
+  m1.title AS title1,
+  m2.id AS movie2,
+  m2.title AS title2,
+  similarity
+ORDER BY similarity DESC
+LIMIT 10;
+
+2- movies receiving similar rating patterns from same users (Pearson):
+MATCH (u:User)-[r1:RATED]->(m1:Movie)
+MATCH (u)-[r2:RATED]->(m2:Movie)
+WHERE m1.id < m2.id
+WITH
+  m1,
+  m2,
+  collect(r1.rating) AS ratings1,
+  collect(r2.rating) AS ratings2,
+  count(u) AS sharedUsers
+WHERE sharedUsers >= 5
+RETURN
+  m1.id AS movie1,
+  m1.title AS title1,
+  m2.id AS movie2,
+  m2.title AS title2,
+  sharedUsers,
+  gds.similarity.pearson(ratings1, ratings2) AS pearsonSimilarity
+ORDER BY pearsonSimilarity DESC, sharedUsers DESC
+LIMIT 10;
+
+3- neighborhood of movies (KNN and Embedding):
+CALL gds.fastRP.mutate('movielens_bipartite', {
+  mutateProperty: 'embedding',
+  embeddingDimension: 64,
+  randomSeed: 42
+})
+YIELD nodePropertiesWritten;
+CALL gds.knn.stream('movielens_bipartite', {
+  nodeProperties: ['embedding'],
+  topK: 10,
+  similarityCutoff: 0.7
+})
+YIELD node1, node2, similarity
+WITH gds.util.asNode(node1) AS m1, gds.util.asNode(node2) AS m2, similarity
+WHERE m1:Movie AND m2:Movie AND id(m1) < id(m2)
+RETURN
+  m1.id AS movie1,
+  m1.title AS title1,
+  m2.id AS movie2,
+  m2.title AS title2,
+  similarity
+ORDER BY similarity DESC
+LIMIT 20;
+
+Details about similar users using 2 graph models:
+1- Based on cosine sim then analyze the demographics
+MATCH (u1:User)-[r1:RATED]->(m:Movie)<-[r2:RATED]-(u2:User)
+WHERE u1.id < u2.id
+WITH
+  u1,
+  u2,
+  collect(r1.rating) AS ratings1,
+  collect(r2.rating) AS ratings2,
+  count(m) AS sharedMovies
+WHERE sharedMovies >= 5
+WITH
+  u1,
+  u2,
+  sharedMovies,
+  gds.similarity.cosine(ratings1, ratings2) AS sim
+WHERE sim IS NOT NULL AND sim > 0.9
+WITH u1, u2, sim
+ORDER BY sim DESC
+LIMIT 3
+RETURN
+  u1.id AS user1,
+  u2.id AS user2,
+  sim AS similarity,
+
+  u1.age AS age1,
+  u2.age AS age2,
+  abs(u1.age - u2.age) AS age_gap,
+
+  u1.gender AS gender1,
+  u2.gender AS gender2,
+  CASE WHEN u1.gender = u2.gender THEN 'same' ELSE 'different' END AS same_gender,
+
+  u1.occupation AS occupation1,
+  u2.occupation AS occupation2,
+  CASE WHEN u1.occupation = u2.occupation THEN 'same' ELSE 'different' END AS same_occupation;
+
+2- based on Jaccard
+MATCH (u1:User)-[:RATED]->(m:Movie)<-[:RATED]-(u2:User)
+WHERE u1.id < u2.id
+WITH u1, u2, count(DISTINCT m) AS inter
+MATCH (u1)-[:RATED]->(m1:Movie)
+WITH u1, u2, inter, count(DISTINCT m1) AS deg1
+MATCH (u2)-[:RATED]->(m2:Movie)
+WITH u1, u2, inter, deg1, count(DISTINCT m2) AS deg2
+WITH u1, u2, inter * 1.0 / (deg1 + deg2 - inter) AS jaccard
+WHERE jaccard > 0.5
+WITH u1, u2, jaccard
+ORDER BY jaccard DESC
+LIMIT 3
+RETURN
+  u1.id AS user1,
+  u2.id AS user2,
+  jaccard,
+
+  u1.age AS age1,
+  u2.age AS age2,
+  abs(u1.age - u2.age) AS age_gap,
+
+  u1.gender AS gender1,
+  u2.gender AS gender2,
+  CASE WHEN u1.gender = u2.gender THEN 'same' ELSE 'different' END AS same_gender,
+
+  u1.occupation AS occupation1,
+  u2.occupation AS occupation2,
+  CASE WHEN u1.occupation = u2.occupation THEN 'same' ELSE 'different' END AS same_occupation;

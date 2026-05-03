@@ -1,0 +1,146 @@
+1- User-user graph based on Jaccard; LOUVAIN applied on it
+
+CALL gds.graph.project.cypher(
+  'usersJaccard',
+  'MATCH (u:User)
+   RETURN id(u) AS id',
+  '
+  MATCH (u1:User)-[:RATED]->(m:Movie)<-[:RATED]-(u2:User)
+  WHERE u1.id < u2.id
+  WITH u1, u2, count(DISTINCT m) AS inter
+  MATCH (u1)-[:RATED]->(m1:Movie)
+  WITH u1, u2, inter, count(DISTINCT m1) AS deg1
+  MATCH (u2)-[:RATED]->(m2:Movie)
+  WITH u1, u2, inter, deg1, count(DISTINCT m2) AS deg2
+  WITH u1, u2, inter * 1.0 / (deg1 + deg2 - inter) AS jaccard
+  WHERE jaccard > 0.1
+  RETURN id(u1) AS source, id(u2) AS target, jaccard AS weight
+  '
+);
+CALL gds.louvain.write('usersJaccard', {
+  relationshipWeightProperty: 'weight',
+  writeProperty: 'communityId'
+})
+YIELD communityCount, modularity;
+
+## INSPECT users and sample to analyze the demographics
+MATCH (u:User)
+WHERE u.communityId IS NOT NULL
+RETURN
+  u.communityId AS community,
+  count(*) AS size,
+  round(avg(u.age), 2) AS avg_age,
+  count(CASE WHEN u.gender = 'M' THEN 1 END) AS nb_males,
+  count(CASE WHEN u.gender = 'F' THEN 1 END) AS nb_females,
+  collect(DISTINCT u.occupation)[0..8] AS occupations
+ORDER BY size DESC
+LIMIT 10;
+MATCH (u:User)
+WHERE u.communityId IS NOT NULL
+WITH u.communityId AS community, collect(u)[0..6] AS users
+UNWIND users AS u
+RETURN
+  community,
+  u.id AS user,
+  u.age AS age,
+  u.gender AS gender,
+  u.occupation AS occupation
+ORDER BY community, user;
+
+2- Top movie genre for communities
+
+MATCH (u:User)-[:RATED]->(m:Movie)
+WHERE u.communityId IS NOT NULL
+
+WITH u.communityId AS community,
+     avg(m.Action) AS Action,
+     avg(m.Adventure) AS Adventure,
+     avg(m.Animation) AS Animation,
+     avg(m.Children) AS Children,
+     avg(m.Comedy) AS Comedy,
+     avg(m.Crime) AS Crime,
+     avg(m.Documentary) AS Documentary,
+     avg(m.Drama) AS Drama,
+     avg(m.Fantasy) AS Fantasy,
+     avg(m["Film-Noir"]) AS FilmNoir,
+     avg(m.Horror) AS Horror,
+     avg(m.Musical) AS Musical,
+     avg(m.Mystery) AS Mystery,
+     avg(m.Romance) AS Romance,
+     avg(m["Sci-Fi"]) AS SciFi,
+     avg(m.Thriller) AS Thriller,
+     avg(m.War) AS War,
+     avg(m.Western) AS Western
+
+WITH community, [
+  {genre: "Action", score: Action},
+  {genre: "Adventure", score: Adventure},
+  {genre: "Animation", score: Animation},
+  {genre: "Children", score: Children},
+  {genre: "Comedy", score: Comedy},
+  {genre: "Crime", score: Crime},
+  {genre: "Documentary", score: Documentary},
+  {genre: "Drama", score: Drama},
+  {genre: "Fantasy", score: Fantasy},
+  {genre: "Film-Noir", score: FilmNoir},
+  {genre: "Horror", score: Horror},
+  {genre: "Musical", score: Musical},
+  {genre: "Mystery", score: Mystery},
+  {genre: "Romance", score: Romance},
+  {genre: "Sci-Fi", score: SciFi},
+  {genre: "Thriller", score: Thriller},
+  {genre: "War", score: War},
+  {genre: "Western", score: Western}
+] AS genres
+
+UNWIND genres AS g
+WITH community, g
+ORDER BY community, g.score DESC
+
+WITH community, collect(g)[0..5] AS topGenres
+RETURN community, topGenres
+ORDER BY community;
+
+3- Betweeness centrality on user-movie:
+CALL gds.betweenness.stream('movielens_bipartite')
+YIELD nodeId, score
+WITH gds.util.asNode(nodeId) AS n, score
+RETURN
+  labels(n) AS node_type,
+  CASE
+    WHEN n:User THEN n.id
+    WHEN n:Movie THEN n.title
+  END AS node,
+  round(score, 2) AS betweenness
+ORDER BY betweenness DESC
+LIMIT 20;
+
+TOP USERS:
+CALL gds.betweenness.stream('movielens_bipartite')
+YIELD nodeId, score
+WITH gds.util.asNode(nodeId) AS n, score
+WHERE n:User
+RETURN
+  n.id AS user,
+  n.age AS age,
+  n.gender AS gender,
+  n.occupation AS occupation,
+  round(score, 2) AS betweenness
+ORDER BY betweenness DESC
+LIMIT 20;
+
+4- PAGE RANK on USER_USER Graph
+CALL gds.pageRank.stream('usersJaccard', {
+  relationshipWeightProperty: 'weight'
+})
+YIELD nodeId, score
+WITH gds.util.asNode(nodeId) AS u, score
+RETURN
+  u.id AS user,
+  round(score, 6) AS pagerank,
+  u.age AS age,
+  u.gender AS gender,
+  u.occupation AS occupation,
+  u.communityId AS community
+ORDER BY pagerank DESC
+LIMIT 20;

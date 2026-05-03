@@ -1,0 +1,102 @@
+Rating Prediction:
+MATCH (u:User {id: 123})-[rTarget:RATED]->(m:Movie {id: 100})
+WITH u, m, rTarget.rating AS actualRating
+
+MATCH (u)-[r1:RATED]->(m_shared:Movie)<-[r2:RATED]-(v:User)
+WHERE v <> u AND m_shared <> m
+WITH u, m, actualRating, v,
+     collect(r1.rating) AS ratings_u,
+     collect(r2.rating) AS ratings_v,
+     count(m_shared) AS commonMovies
+WHERE commonMovies >= 3
+
+WITH u, m, actualRating, v,
+     gds.similarity.cosine(ratings_u, ratings_v) AS sim
+WHERE sim IS NOT NULL AND sim > 0
+
+MATCH (v)-[rv:RATED]->(m)
+WITH u, m, actualRating, sim, rv.rating AS neighborRating
+ORDER BY sim DESC
+WITH u, m, actualRating, collect({sim: sim, rating: neighborRating})[0..10] AS neighs
+
+WITH u, m, actualRating, neighs,
+     reduce(num = 0.0, x IN neighs | num + x.sim * x.rating) AS weightedSum,
+     reduce(den = 0.0, x IN neighs | den + abs(x.sim)) AS simSum
+WHERE simSum > 0
+
+RETURN
+  u.id AS user,
+  m.id AS movie,
+  m.title AS title,
+  actualRating,
+  round(weightedSum / simSum, 3) AS predictedRating,
+  round(abs(actualRating - (weightedSum / simSum)), 3) AS absoluteError,
+  size(neighs) AS neighborsUsed;
+
+MATCH (u:User {id: 123})-[rTarget:RATED]->(m:Movie {id: 98})
+WITH u, m, rTarget.rating AS actualRating
+
+MATCH (u)-[r1:RATED]->(m_shared:Movie)<-[r2:RATED]-(v:User)
+WHERE v <> u AND m_shared <> m
+WITH u, m, actualRating, v,
+     collect(r1.rating) AS ratings_u,
+     collect(r2.rating) AS ratings_v,
+     count(m_shared) AS commonMovies
+WHERE commonMovies >= 3
+
+WITH u, m, actualRating, v,
+     gds.similarity.cosine(ratings_u, ratings_v) AS sim
+WHERE sim IS NOT NULL AND sim > 0
+
+MATCH (v)-[rv:RATED]->(m)
+WITH u, m, actualRating, sim, rv.rating AS neighborRating
+ORDER BY sim DESC
+WITH u, m, actualRating, collect({sim: sim, rating: neighborRating})[0..10] AS neighs
+
+WITH u, m, actualRating, neighs,
+     reduce(num = 0.0, x IN neighs | num + x.sim * x.rating) AS weightedSum,
+     reduce(den = 0.0, x IN neighs | den + abs(x.sim)) AS simSum
+WHERE simSum > 0
+
+RETURN
+  u.id AS user,
+  m.id AS movie,
+  m.title AS title,
+  actualRating,
+  round(weightedSum / simSum, 3) AS predictedRating,
+  round(abs(actualRating - (weightedSum / simSum)), 3) AS absoluteError,
+  size(neighs) AS neighborsUsed;
+
+MATCH (u:User {id: 123})-[rTarget:RATED]->(m:Movie {id: 275})
+WITH u, m, rTarget.rating AS actualRating
+
+MATCH (u)-[r1:RATED]->(m_shared:Movie)<-[r2:RATED]-(v:User)
+WHERE v <> u AND m_shared <> m
+WITH u, m, actualRating, v,
+     collect(r1.rating) AS ratings_u,
+     collect(r2.rating) AS ratings_v,
+     count(m_shared) AS commonMovies
+WHERE commonMovies >= 3
+
+WITH u, m, actualRating, v,
+     gds.similarity.cosine(ratings_u, ratings_v) AS sim
+WHERE sim IS NOT NULL AND sim > 0
+
+MATCH (v)-[rv:RATED]->(m)
+WITH u, m, actualRating, sim, rv.rating AS neighborRating
+ORDER BY sim DESC
+WITH u, m, actualRating, collect({sim: sim, rating: neighborRating})[0..10] AS neighs
+
+WITH u, m, actualRating, neighs,
+     reduce(num = 0.0, x IN neighs | num + x.sim * x.rating) AS weightedSum,
+     reduce(den = 0.0, x IN neighs | den + abs(x.sim)) AS simSum
+WHERE simSum > 0
+
+RETURN
+  u.id AS user,
+  m.id AS movie,
+  m.title AS title,
+  actualRating,
+  round(weightedSum / simSum, 3) AS predictedRating,
+  round(abs(actualRating - (weightedSum / simSum)), 3) AS absoluteError,
+  size(neighs) AS neighborsUsed;
